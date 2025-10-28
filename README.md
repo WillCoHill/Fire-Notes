@@ -1,6 +1,8 @@
-# Welcome to the Fire Notes 👋
+# Welcome to the Fire Notes App 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+
+![Fire Logo](assets\images/fire-logo.png)
 
 ## Get started
 
@@ -32,6 +34,9 @@ When you're ready, run:
 ```bash
 npm run reset-project
 ```
+
+This project is currently being developed and will use a local store for notes only so far.
+Do not clear the cache on this application if you wish to keep the notes that you have.
 
 This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, JSX } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   TextInput,
@@ -7,54 +7,87 @@ import {
   Text,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { useSelector, useDispatch } from 'react-redux';
+import { useAppSelector, useAppDispatch } from '../hooks/redux'; // Use typed hooks
 import { updateNote } from '../store/noteSlice';
-import { RootState } from '../store/store';
 import { EditNoteScreenProps } from '../types/navigation';
 import { NoteRow, RowType } from '../types/note';
 import NoteRowComponent from '../components/NoteRow';
+import { ExportService } from '../services/exportService';
 import debounce from 'lodash/debounce';
 
 export default function EditNoteScreen({ route, navigation }: EditNoteScreenProps): JSX.Element {
   const { noteId } = route.params;
-  const notes = useSelector((state: RootState) => state.notes.notes);
-  const dispatch = useDispatch();
+  const notes = useAppSelector((state) => state.notes.notes);
+  const { isSaving, isLoading } = useAppSelector((state) => state.notes);
+  const dispatch = useAppDispatch();
   
-  const note = notes.find(n => n.id === noteId);
+  const note = notes.find(n => n.id === noteId || n._id === noteId);
   const [title, setTitle] = useState<string>(note?.title || '');
   const [rows, setRows] = useState<NoteRow[]>(note?.rows || []);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
 
-  // Auto-save function with debouncing
+  // USER REFS FOR LATEST VALS
+  const titleRef = useRef(title);
+  const rowsRef = useRef(rows);
+  const noteIdRef = useRef(noteId);
+
+  // UPDATED REFS
+  useEffect(() => {
+    titleRef.current = title;
+    rowsRef.current = rows;
+    noteIdRef.current = noteId;
+  }, [title, rows, noteId]);
+
+  // AUTOSAVE FUNCTION
   const autoSave = useCallback(
-    debounce((currentTitle: string, currentRows: NoteRow[]) => {
-      if (!noteId) return;
+    debounce(() => {
+      const currentTitle = titleRef.current;
+      const currentRows = rowsRef.current;
+      const currentNoteId = noteIdRef.current;
+
+      if (!currentNoteId) {
+        console.log('No note ID available for auto-save');
+        return;
+      }
+
+      console.log('Auto-saving note:', currentNoteId);
       
       dispatch(updateNote({
-        id: noteId,
-        updates: { title: currentTitle, rows: currentRows }
-      }));
-      
-      setHasUnsavedChanges(false);
-      console.log('Auto-saved note:', currentTitle);
-    }, 1000), // Wait 1 second after last change made
-    [noteId, dispatch]
+        id: currentNoteId,
+        updates: { 
+          title: currentTitle, 
+          rows: currentRows,
+          updatedAt: new Date().toISOString()
+        }
+      }))
+        .unwrap()
+        .then(() => {
+          setHasUnsavedChanges(false);
+          console.log('Auto-save successful');
+        })
+        .catch((error) => {
+          console.error('Auto-save failed:', error);
+          setHasUnsavedChanges(true);
+          Alert.alert('Save Error', 'Failed to save note. Please check your connection.');
+        });
+    }, 1500),
+    [dispatch]
   );
 
-  // Update title and trigger auto-save
   const handleTitleChange = (text: string) => {
     setTitle(text);
     setHasUnsavedChanges(true);
+    autoSave();
   };
 
-  // Update rows & trigger auto-save
   const handleRowsChange = (newRows: NoteRow[]) => {
     setRows(newRows);
     setHasUnsavedChanges(true);
+    autoSave();
   };
 
-  // ROW CRUD
   const addRow = (type: RowType): void => {
     const newRow: NoteRow = {
       id: Date.now().toString(),
@@ -65,7 +98,6 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
     handleRowsChange([...rows, newRow]);
   };
 
- 
   const updateRow = (rowId: string, content: string): void => {
     const updatedRows = rows.map(row => 
       row.id === rowId ? { ...row, content } : row
@@ -78,7 +110,6 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
     handleRowsChange(updatedRows);
   };
 
-  // NEW FEATURE 10/26: Duplicate a row (BELOW current row)
   const duplicateRow = (rowId: string): void => {
     const rowToDuplicate = rows.find(row => row.id === rowId);
     if (!rowToDuplicate) return;
@@ -87,20 +118,16 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
       id: Date.now().toString(),
       type: rowToDuplicate.type,
       content: rowToDuplicate.content,
-      order: rows.length, // This will make it at the end, for now
+      order: rows.length,
     };
 
-    // Search for the index of the row to duplicate
     const rowIndex = rows.findIndex(row => row.id === rowId);
-    
-    // Insert the new row right below the duplicated row
     const updatedRows = [
       ...rows.slice(0, rowIndex + 1),
       newRow,
       ...rows.slice(rowIndex + 1)
     ];
 
-    // Update new order for all rows
     const rowsWithUpdatedOrder = updatedRows.map((row, index) => ({
       ...row,
       order: index
@@ -109,33 +136,114 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
     handleRowsChange(rowsWithUpdatedOrder);
   };
 
-  // Save right when component unmounts
-  useEffect(() => {
-    return () => {
-      if (hasUnsavedChanges) {
-        autoSave.flush(); // <<<<< Force immediate save
-      }
-    };
-  }, [hasUnsavedChanges, autoSave]);
-
-  // Auto-save when either TITLE or ROWS has change
-  useEffect(() => {
-    if (hasUnsavedChanges) {
-      autoSave(title, rows);
+  const handleExportTxt = async (): Promise<void> => {
+    if (!note) {
+      Alert.alert('Error', 'No note found to export');
+      return;
     }
 
-    // Debounce will be cleaned up ON UNMOUNT
+    const currentNote = {
+      ...note,
+      title,
+      rows,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await ExportService.exportNoteAsTxt(currentNote);
+  };
+
+  const handleExportMarkdown = async (): Promise<void> => {
+    if (!note) {
+      Alert.alert('Error', 'No note found to export');
+      return;
+    }
+
+    const currentNote = {
+      ...note,
+      title,
+      rows,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await ExportService.exportNoteAsMarkdown(currentNote);
+  };
+
+  const showExportOptions = (): void => {
+    Alert.alert(
+      'Export Note',
+      'Choose export format:',
+      [
+        {
+          text: 'Text File (.txt)',
+          onPress: handleExportTxt,
+        },
+        {
+          text: 'Markdown (.md)',
+          onPress: handleExportMarkdown,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const forceSave = useCallback(() => {
+    if (hasUnsavedChanges) {
+      autoSave.flush();
+    }
+  }, [hasUnsavedChanges, autoSave]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      forceSave();
+    });
+
+    return unsubscribe;
+  }, [navigation, forceSave]);
+
+  useEffect(() => {
+    let headerTitle = `${title || 'New Note'}`;
+    
+    if (hasUnsavedChanges) {
+      headerTitle += ' •';
+    }
+    
+    if (isSaving) {
+      headerTitle += ' (Saving...)';
+    }
+
+    navigation.setOptions({
+      title: headerTitle,
+      headerRight: () => (
+        <View style={styles.headerButtons}>
+          {isSaving && <ActivityIndicator size="small" color="#007AFF" style={styles.savingIndicator} />}
+          <TouchableOpacity onPress={showExportOptions} style={styles.headerButton}>
+            <Text style={styles.headerButtonText}>📤</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={forceSave} style={styles.headerButton}>
+            <Text style={styles.headerButtonText}>💾</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [title, hasUnsavedChanges, isSaving, navigation, forceSave]);
+
+  useEffect(() => {
     return () => {
       autoSave.cancel();
     };
-  }, [title, rows, hasUnsavedChanges, autoSave]);
+  }, [autoSave]);
 
-  // Update for title with unsaved changes indicate
-  useEffect(() => {
-    navigation.setOptions({
-      title: `${title || 'New Note'}${hasUnsavedChanges ? ' •' : ''}`,
-    });
-  }, [title, hasUnsavedChanges, navigation]);
+  if (isLoading && !note) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" />
+        <Text>Loading note...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -159,7 +267,14 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
         )}
         keyExtractor={(item: NoteRow) => item.id}
         style={styles.list}
+        contentContainerStyle={rows.length === 0 ? styles.emptyList : undefined}
       />
+
+      {rows.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>No content yet. Add some rows below!</Text>
+        </View>
+      )}
 
       <View style={styles.addButtons}>
         <TouchableOpacity 
@@ -182,21 +297,43 @@ export default function EditNoteScreen({ route, navigation }: EditNoteScreenProp
         >
           <Text style={styles.addButtonText}>☑️ Checkbox</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.addButton, styles.exportButton]}
+          onPress={showExportOptions}
+        >
+          <Text style={styles.addButtonText}>📤 Export</Text>
+        </TouchableOpacity>
       </View>
 
-      {hasUnsavedChanges && (
-        <View style={styles.saveIndicator}>
-          <Text style={styles.saveIndicatorText}>Saving...</Text>
-        </View>
-      )}
+      <View style={styles.statusBar}>
+        {hasUnsavedChanges && !isSaving && (
+          <Text style={styles.unsavedText}>Unsaved changes</Text>
+        )}
+        {isSaving && (
+          <View style={styles.savingContainer}>
+            <ActivityIndicator size="small" color="#007AFF" />
+            <Text style={styles.savingText}>Saving...</Text>
+          </View>
+        )}
+        {!hasUnsavedChanges && !isSaving && (
+          <Text style={styles.savedText}>All changes saved</Text>
+        )}
+      </View>
     </View>
   );
 }
 
+// STYLE REDUNDANCY
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   titleInput: {
     fontSize: 20,
@@ -211,33 +348,79 @@ const styles = StyleSheet.create({
   list: {
     flex: 1,
   },
+  emptyList: {
+    flexGrow: 1,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  savingIndicator: {
+    marginRight: 8,
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  headerButtonText: {
+    fontSize: 18,
+  },
   addButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 16,
     paddingHorizontal: 8,
+    flexWrap: 'wrap',
   },
   addButton: {
     padding: 12,
     backgroundColor: '#007AFF',
     borderRadius: 8,
-    minWidth: 100,
+    minWidth: 80,
     alignItems: 'center',
+    marginBottom: 8,
+  },
+  exportButton: {
+    backgroundColor: '#34C759',
   },
   addButtonText: {
     color: 'white',
     fontWeight: '600',
-  },
-  saveIndicator: {
-    position: 'absolute',
-    top: 70,
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 8,
-    borderRadius: 4,
-  },
-  saveIndicatorText: {
-    color: 'white',
     fontSize: 12,
+  },
+  statusBar: {
+    padding: 8,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+    marginTop: 8,
+  },
+  savingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  savingText: {
+    marginLeft: 8,
+    color: '#007AFF',
+    fontSize: 14,
+  },
+  unsavedText: {
+    color: '#FF9500',
+    fontSize: 14,
+  },
+  savedText: {
+    color: '#34C759',
+    fontSize: 14,
   },
 });

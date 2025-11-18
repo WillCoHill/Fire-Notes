@@ -1,29 +1,28 @@
 import { configureStore } from '@reduxjs/toolkit';
-import noteReducer from './noteSlice';
-import { persistReducer,
-         persistStore,
-        FLUSH,
-        REHYDRATE,
-        PAUSE,
-        PERSIST,
-        PURGE,
-        REGISTER } from 'redux-persist';
+import {
+  persistStore,
+  persistReducer,
+  FLUSH,
+  REHYDRATE,
+  PAUSE,
+  PERSIST,
+  PURGE,
+  REGISTER,
+} from 'redux-persist';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-//kept for posterity to consolidate reducer functions
-import { combineReducers } from 'redux';
+import noteReducer from './noteSlice';
+import authReducer from './authSlice';
 
-const persistConfig = {
-  key: 'root',
+const authPersistConfig = {
+  key: 'auth',
   storage: AsyncStorage,
-  version: 1
+  whitelist: ['user', 'token'],
 };
-
-
-const persistedReducer = persistReducer(persistConfig, noteReducer);
 
 export const store = configureStore({
   reducer: {
-    notes: persistedReducer,
+    auth: persistReducer(authPersistConfig, authReducer),
+    notes: noteReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

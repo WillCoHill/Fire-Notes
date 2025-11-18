@@ -2,7 +2,7 @@
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
-![Fire Logo](assets\images/fire-logo.png)
+![Fire Logo](https://github.com/WillCoHill/Fire-Notes/blob/main/assets/images/fire-logo.png)
 
 ## Get started
 
